@@ -19,6 +19,10 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
+# Copyright 2016 by Rui Wu
+# Specified above is the skeleton code of this webpage reading process. My modification
+# is data structure manipulation.
+
 import urllib2
 import urlparse
 from bs4 import BeautifulSoup
