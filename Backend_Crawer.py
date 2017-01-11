@@ -19,21 +19,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 
-# Copyright 2016 by Rui Wu
-# Specified above is the skeleton code of this webpage reading process. My modification
-# is data structure manipulation.
-
 import urllib2
 import urlparse
-from bs4 import BeautifulSoup
-from bs4 import Tag
+from BeautifulSoup import *
+from pagerank import *
 from collections import defaultdict
 import re
-WORD_LIST=[]
-URL_LIST=[]
-Lexicon=dict()
-Lexicon_2=dict()
-curr_doc_id=0
+import sqlite3 as lite
+
 def attr(elem, attr):
     """An html attribute from an html element. E.g. <a href="">, then
     attr(elem, "href") will get the href or an empty string."""
@@ -43,6 +36,10 @@ def attr(elem, attr):
         return ""
 
 WORD_SEPARATORS = re.compile(r'\s|\n|\r|\t|[^a-zA-Z0-9\-_]')
+Document_Index=[]
+Word_Lexicon=[]
+Inverted_Index={}
+Resolved_Inverted_Index={}
 
 class crawler(object):
     """Represents 'Googlebot'. Populates a database by crawling and indexing
@@ -51,13 +48,56 @@ class crawler(object):
     This crawler keeps track of font sizes and makes it simpler to manage word
     ids and document ids."""
 
+    #Function that retrieves _document_index list from the object
+    def get_document_index(self):
+        temp=[]
+        #crawl through the url document
+        self.crawl(depth=1)
+        for i in self._depthOK_doc_id_cache:
+            #append the doc_id to the list
+            temp=temp+[self._depthOK_doc_id_cache[i]]
+        temp.sort()
+        return temp
+
+    #Function that retrieves _word_lexicon list from the object
+    def get_word_lexicon(self):
+        temp=[]
+        #crawl through the url document
+        self.crawl(depth=1)
+        for i in self._word_id_cache:
+            #append the word to the list
+            temp=temp+[i]
+        temp.sort()
+        return temp
+
+
+    #Function that retrieves _inverted_index dictionary from the object
+    def get_inverted_index(self):
+        self.crawl(depth=1)
+        return self._inverted_index
+
+
+    #Function that retrieves _resolved_inverted_index dictionary from the object
+    def get_resolved_inverted_index(self):
+        self.crawl(depth=1)
+        return self._resolved_inverted_index
+
+
+
     def __init__(self, db_conn, url_file):
         """Initialize the crawler with a connection to the database to populate
         and with the file containing the list of seed URLs to begin indexing."""
         self._url_queue = [ ]
         self._doc_id_cache = { }
+        self._depthOK_doc_id_cache = { }
         self._word_id_cache = { }
-
+        self._reference_relations = [ ]
+        #added lexicons
+        #_inverted_index is a dictionary in which keys are word_id and values are sets of doc_id that contains the word. Declare the dictionary here
+        self._inverted_index = { }
+        #_resolved_inverted_index is a dictionary in which keys are words and values are sets of urls that contain the word. Declare the dictionary here
+        self._resolved_inverted_index = { }
+        
         # functions to call when entering and exiting specific tags
         self._enter = defaultdict(lambda *a, **ka: self._visit_ignore)
         self._exit = defaultdict(lambda *a, **ka: self._visit_ignore)
@@ -107,7 +147,7 @@ class crawler(object):
             '', 'the', 'of', 'at', 'on', 'in', 'is', 'it',
             'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
             'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
-            'u', 'v', 'w', 'x', 'y', 'z', 'and', 'or'
+            'u', 'v', 'w', 'x', 'y', 'z', 'and', 'or',
         ])
 
         # TODO remove me in real version
@@ -129,7 +169,7 @@ class crawler(object):
         except IOError:
             pass
     
-    '''# TODO remove me in real version
+    # TODO remove me in real version
     def _mock_insert_document(self, url):
         """A function that pretends to insert a url into a document db table
         and then returns that newly inserted document's id."""
@@ -143,67 +183,51 @@ class crawler(object):
         and then returns that newly inserted word's id."""
         ret_id = self._mock_next_word_id
         self._mock_next_word_id += 1
-        return ret_id'''
+        return ret_id
     
     def word_id(self, word):
         """Get the word id of some specific word."""
+        #case in which word is not in the cache yet
         if word in self._word_id_cache:
-            return self._word_id_cache[word]
+            #get the word_id from the cache
+            wid=self._word_id_cache[str(word)]
+            #if the doc_id is not in the _inverted_index dictionary yet, add the doc_id to the set
+            if self._curr_doc_id not in self._inverted_index[str(wid)]:
+                self._inverted_index[str(wid)].add(self._curr_doc_id)
+            #if the url is not in the _resolved_inverted_index dictionary yet, add the url to the set
+            if self._curr_url not in self._resolved_inverted_index[str(word)]:
+                self._resolved_inverted_index[str(word)].add(str(self._curr_url))
+                    #return the word_id associated to the word
+            return self._word_id_cache[str(word)]
         
         # TODO: 1) add the word to the lexicon, if that fails, then the
         #          word is in the lexicon
         #       2) query the lexicon for the id assigned to this word, 
         #          store it in the word id cache, and return the id.
-	    # I added these lines:
-        TempSet=set()
-        TempSet.add(URL_LIST[self._curr_doc_id])
-        #print(self._curr_doc_id)
         
-            
-        if word not in WORD_LIST:
-            WORD_LIST.append(word)
-            word_id=WORD_LIST.index(word)
-            Lexicon[word]=set()
-            Lexicon[word].add(URL_LIST[self._curr_doc_id])
-            Lexicon_2[word_id]=set()
-            Lexicon_2[word_id].add(self._curr_doc_id)
-                
-        elif (word in WORD_LIST) and (not Lexicon[word].intersection(TempSet)):
-            word_id=WORD_LIST.index(word)
-            Lexicon[word].add(URL_LIST[self._curr_doc_id])
-            Lexicon_2[word_id].add(self._curr_doc_id)
-        
-        elif word in WORD_LIST:
-			word_id=WORD_LIST.index(word)
-			return word_id
-        
-			
+        #This is the case in which the word hasn't been seen before
+        #get the word_id from _mock_insert_word
+        word_id = self._mock_insert_word(word)
+        #store the word and it's word_id in the word cache
+        self._word_id_cache[str(word)] = word_id
+        #add a new key and set to _inverted_index and _resolved_inverted_index
+        self._inverted_index[str(self._word_id_cache[word])]=set([self._curr_doc_id])
+        self._resolved_inverted_index[str(word)]=set([str(self._curr_url)])
 
-	    #I commented this line
-        #word_id = self._mock_insert_word(word)
-        self._word_id_cache[word] = word_id
         return word_id
     
     def document_id(self, url):
         """Get the document id for some url."""
-        if url in self._doc_id_cache:
-            return self._doc_id_cache[url]
         
         # TODO: just like word id cache, but for documents. if the document
         #       doesn't exist in the db then only insert the url and leave
         #       the rest to their defaults.
-        #I added these lines:
-        if url in URL_LIST:
-			doc_id=URL_LIST.index(url)
-        else:
-			URL_LIST.append(str(url))
-			doc_id=URL_LIST.index(url)
-            
-	    #I commented out this line:        
-	    #doc_id = self._mock_insert_document(url)
-        #self._curr_doc_id=doc_id
         
-        self._doc_id_cache[url] = doc_id
+        if str(url) in self._doc_id_cache:
+            return self._doc_id_cache[str(url)]
+
+        doc_id = self._mock_insert_document(str(url))
+        self._doc_id_cache[str(url)] = doc_id
         return doc_id
     
     def _fix_url(self, curr_url, rel):
@@ -235,20 +259,23 @@ class crawler(object):
         """Called when visiting <a> tags."""
 
         dest_url = self._fix_url(self._curr_url, attr(elem,"href"))
-
         #print "href="+repr(dest_url), \
         #      "title="+repr(attr(elem,"title")), \
         #      "alt="+repr(attr(elem,"alt")), \
         #      "text="+repr(self._text_of(elem))
-        
+
         # add the just found URL to the url queue
+
         self._url_queue.append((dest_url, self._curr_depth))
-        '''dID=self.document_id(dest_url)'''
+        
         # add a link entry into the database from the current document to the
         # other document
         self.add_link(self._curr_doc_id, self.document_id(dest_url))
-        #print(self._curr_doc_id)
-        
+
+        #Adding the current url->next url relation to the self._reference_relations list
+        if (self._doc_id_cache[str(self._curr_url)], self._doc_id_cache[str(dest_url)]) not in self._reference_relations:
+            self._reference_relations.append((self._doc_id_cache[str(self._curr_url)], self._doc_id_cache[str(dest_url)]))
+
         # TODO add title/alt/text to index for destination url
     
     def _add_words_to_document(self):
@@ -256,6 +283,7 @@ class crawler(object):
         #       font sizes (in self._curr_words), add all the words into the
         #       database for this document
         print "    num words="+ str(len(self._curr_words))
+        abcdefg=0
 
     def _increase_font_factor(self, factor):
         """Increade/decrease the current font size."""
@@ -263,6 +291,7 @@ class crawler(object):
             self._font_size += factor
         return increase_it
     
+
     def _visit_ignore(self, elem):
         """Ignore visiting this type of tag"""
         pass
@@ -271,16 +300,11 @@ class crawler(object):
         """Add some text to the document. This records word ids and word font sizes
         into the self._curr_words list for later processing."""
         words = WORD_SEPARATORS.split(elem.string.lower())
-        
         for word in words:
-            word = str(word.strip())
-            
+            word = word.strip()
             if word in self._ignored_words:
                 continue
-            
             self._curr_words.append((self.word_id(word), self._font_size))
-            
-            
         
     def _text_of(self, elem):
         """Get the text inside some element without any tags."""
@@ -304,13 +328,13 @@ class crawler(object):
         class NextTag(object):
             def __init__(self, obj):
                 self.next = obj
-        #print(self._curr_doc_id)
+        
         tag = soup.html
         stack = [DummyTag(), soup.html]
 
         while tag and tag.next:
             tag = tag.next
-            #print(self._curr_doc_id)
+
             # html tag
             if isinstance(tag, Tag):
 
@@ -337,23 +361,22 @@ class crawler(object):
 
             # text (text, cdata, comments, etc.)
             else:
-                #print(self._curr_doc_id)
                 self._add_text(tag)
 
-    def crawl(self, depth=0, timeout=3):
+    def crawl(self, depth=2, timeout=3):
         """Crawl the web!"""
         seen = set()
 
         while len(self._url_queue):
-
             url, depth_ = self._url_queue.pop()
-
+            
             # skip this url; it's too deep
             if depth_ > depth:
                 continue
-
+            
             doc_id = self.document_id(url)
-
+            self._depthOK_doc_id_cache[str(url)] = str(doc_id)
+            
             # we've already seen this document
             if doc_id in seen:
                 continue
@@ -363,7 +386,7 @@ class crawler(object):
             socket = None
             try:
                 socket = urllib2.urlopen(url, timeout=timeout)
-                soup = BeautifulSoup(socket.read(),'html.parser')
+                soup = BeautifulSoup(socket.read())
 
                 self._curr_depth = depth_ + 1
                 self._curr_url = url
@@ -382,8 +405,78 @@ class crawler(object):
                     socket.close()
 
 if __name__ == "__main__":
-    bot = crawler(None, "urls.txt")
-    bot.crawl(depth=0)
-    print(Lexicon_2)
-    print(Lexicon)
-    
+    bot = crawler(None, "urls1.txt")
+    bot.crawl(depth=1)
+    Document_Index=bot.get_document_index()
+    Word_Lexicon=bot.get_word_lexicon()
+    Inverted_Index=bot.get_inverted_index()
+    Resolved_Inverted_Index=bot.get_resolved_inverted_index()
+    Page_Rank_Result=page_rank(bot._reference_relations)
+
+    con=lite.connect("../Frontend/dbFile.db")
+    cur=con.cursor()
+
+    #cur.execute('DROP TABLE documentIndex;')
+    #cur.execute('CREATE TABLE IF NOT EXISTS documentIndex(url TEXT PRIMARY KEY, id INTEGER);')
+    #for i in bot._depthOK_doc_id_cache:
+    #    line="insert into documentIndex values ('"+i+"','"+bot._depthOK_doc_id_cache[i]+"')"
+    #    cur.execute(line)
+    #con.commit()
+
+    #cur.execute('DROP TABLE wordLexicon;')
+    #cur.execute('CREATE TABLE IF NOT EXISTS wordLexicon(word TEXT PRIMARY KEY, id INTEGER);')
+    #for i in bot._word_id_cache:
+    #    line="insert into wordLexicon values ('"+i+"','"+str(bot._word_id_cache[i])+"')"
+    #    cur.execute(line)
+    #con.commit()
+
+    #cur.execute('DROP TABLE invertedIndex;')
+    #cur.execute('CREATE TABLE IF NOT EXISTS invertedIndex(id INTEGER PRIMARY KEY, wid INTEGER, docid INTEGER);')
+    #for i in Inverted_Index:
+    #    for j in Inverted_Index[i]:
+    #        line="insert into invertedIndex values (NULL,'"+i+"','"+str(j)+"')"
+    #        cur.execute(line)
+    #con.commit()
+
+    #cur.execute('DROP TABLE resolvedInvertedIndex;')
+    cur.execute('CREATE TABLE IF NOT EXISTS resolvedInvertedIndex(id INTEGER PRIMARY KEY, word TEXT, doc TEXT);')
+    for i in Resolved_Inverted_Index:
+        for j in Resolved_Inverted_Index[i]:
+            line="insert into resolvedInvertedIndex values (NULL, '"+i+"','"+j+"')"
+            cur.execute(line)
+    con.commit()
+
+    #cur.execute('DROP TABLE pageRankResult;')
+    cur.execute('CREATE TABLE IF NOT EXISTS pageRankResult(docid TEXT PRIMARY KEY, rank REAL);')
+    for i in Page_Rank_Result:
+        temp=''
+        for j in bot._depthOK_doc_id_cache:
+            if bot._depthOK_doc_id_cache[j]==str(i):
+                temp=j
+        line="insert into pageRankResult values ('"+temp+"','"+str(Page_Rank_Result[i])+"')"
+        cur.execute(line)
+    con.commit()
+    #cur.execute('select * from documentIndex')
+    #for row in cur:
+    #    print row
+    #cur.execute('select * from wordLexicon')
+    #for row in cur:
+    #    print row
+    #cur.execute('select * from invertedIndex')
+    #for row in cur:
+    #    print row
+    #cur.execute('select * from resolvedInvertedIndex')
+    #for row in cur:
+    #    print row
+    #cur.execute('select * from pageRankResult')
+    #for row in cur:
+    #    print row
+    con.close()
+    #print bot._depthOK_doc_id_cache
+    #print bot._reference_relations
+    #print Document_Index
+    #print Page_Rank_Result
+    #print bot._depthOK_doc_id_cache
+    #print Word_Lexicon
+    #print Inverted_Index
+    #print Resolved_Inverted_Index
